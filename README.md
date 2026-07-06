@@ -19,6 +19,7 @@ docker compose up -d        # postgres + redis
 cp .env.example .env
 npm install
 npx prisma migrate deploy
+npx prisma generate
 npm run start:dev
 ```
 

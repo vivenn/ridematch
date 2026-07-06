@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, OnModuleDestroy } from '@nestjs/common';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { Redis } from 'ioredis';
@@ -25,8 +25,12 @@ const advanceBatchScript = readFileSync(join(LUA_DIR, 'advance-batch.lua'), 'utf
 const cancelRideScript = readFileSync(join(LUA_DIR, 'cancel-ride.lua'), 'utf8');
 
 @Injectable()
-export class RedisService {
+export class RedisService implements OnModuleDestroy {
   constructor(@Inject(REDIS_CLIENT) public readonly client: Redis) {}
+
+  async onModuleDestroy() {
+    await this.client.quit();
+  }
 
   async setDriverLocation(driverId: string, lat: number, lng: number) {
     await this.client.geoadd(DRIVERS_GEO_KEY, lng, lat, driverId);

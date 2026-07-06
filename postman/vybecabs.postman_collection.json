@@ -1,0 +1,95 @@
+{
+  "info": {
+    "name": "vybecabs",
+    "description": "Real-time driver allocation API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3000" },
+    { "key": "driverId", "value": "" },
+    { "key": "rideId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Drivers",
+      "item": [
+        {
+          "name": "Register driver",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/drivers",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Ramesh Kumar\",\n  \"phone\": \"9810000001\",\n  \"vehicleNo\": \"DL01AB1001\"\n}"
+            }
+          }
+        },
+        {
+          "name": "List drivers",
+          "request": { "method": "GET", "url": "{{baseUrl}}/drivers" }
+        },
+        {
+          "name": "Get driver",
+          "request": { "method": "GET", "url": "{{baseUrl}}/drivers/{{driverId}}" }
+        },
+        {
+          "name": "Update driver location",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/drivers/{{driverId}}/location",
+            "body": { "mode": "raw", "raw": "{\n  \"lat\": 28.6139,\n  \"lng\": 77.2090\n}" }
+          }
+        },
+        {
+          "name": "Go online",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/drivers/{{driverId}}/status",
+            "body": { "mode": "raw", "raw": "{\n  \"status\": \"ONLINE\"\n}" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Rides",
+      "item": [
+        {
+          "name": "Request a ride",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/rides",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"riderName\": \"Aman\",\n  \"riderPhone\": \"9999999999\",\n  \"pickupLat\": 28.6139,\n  \"pickupLng\": 77.2090\n}"
+            }
+          }
+        },
+        {
+          "name": "List rides",
+          "request": { "method": "GET", "url": "{{baseUrl}}/rides" }
+        },
+        {
+          "name": "Get ride",
+          "request": { "method": "GET", "url": "{{baseUrl}}/rides/{{rideId}}" }
+        },
+        {
+          "name": "Accept ride",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/rides/{{rideId}}/accept",
+            "body": { "mode": "raw", "raw": "{\n  \"driverId\": \"{{driverId}}\"\n}" }
+          }
+        },
+        {
+          "name": "Cancel ride",
+          "request": { "method": "POST", "url": "{{baseUrl}}/rides/{{rideId}}/cancel" }
+        }
+      ]
+    }
+  ]
+}

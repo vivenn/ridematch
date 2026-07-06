@@ -1,98 +1,208 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# vybecabs
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+Real-time driver allocation service. A rider requests a ride, the system finds the
+nearest online drivers using Redis geo search, offers the ride to a small batch of them
+at once, and makes sure exactly one of them ends up assigned even if several try to
+accept in the same instant.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+## Stack
 
-## Description
+- NestJS (TypeScript)
+- PostgreSQL + Prisma
+- Redis (geo search + atomic assignment via Lua)
+- Socket.IO for pushing offers to drivers
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
-
-## Project setup
+## Running it
 
 ```bash
-$ npm install
+docker compose up -d        # postgres + redis
+cp .env.example .env
+npm install
+npx prisma migrate deploy
+npm run start:dev
 ```
 
-## Compile and run the project
+The API listens on `http://localhost:3000`.
+
+To quickly have some drivers to test against:
 
 ```bash
-# development
-$ npm run start
-
-# watch mode
-$ npm run start:dev
-
-# production mode
-$ npm run start:prod
+npm run seed
 ```
 
-## Run tests
+This registers six drivers around Connaught Place, Delhi and puts them online.
+
+## Running the concurrency test
 
 ```bash
-# unit tests
-$ npm run test
-
-# e2e tests
-$ npm run test:e2e
-
-# test coverage
-$ npm run test:cov
+npm run test:e2e
 ```
 
-## Deployment
+`test/concurrency.e2e-spec.ts` spins up the app against the real Postgres/Redis, puts
+five drivers on the same spot, creates a ride, then fires `POST /rides/:id/accept` for
+all of them **at the same time** with `Promise.all`. It asserts exactly one request
+comes back `201` and the rest come back `409`, and that the ride in Postgres agrees with
+whoever won. It also checks that the winner retrying the same accept call gets the same
+result back instead of an error, which is the idempotency requirement.
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+## Architecture
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+```
+ rider                         drivers
+   |                              |
+   | POST /rides                  | (connected over websocket,
+   v                              |  joined room driver:{id})
++-----------------------------+   |
+|  RidesService.create        |   |
+|  - saves ride (REQUESTED)   |   |
++-----------------------------+   |
+   |                              |
+   v                              |
++-----------------------------+   |
+| RideAllocationService        |   |
+|  - flips ride to SEARCHING   |   |
+|  - GEOSEARCH drivers:geo     |   |
+|    for nearest N drivers     |   |
+|  - records offers in pg+redis|   |
+|  - emits "ride:offer" ------------> driver app(s)
+|  - starts offer timeout timer|   |
++-----------------------------+   |
+   |                              |
+   |                    POST /rides/:id/accept { driverId }
+   |                              |
+   v                              v
++---------------------------------------------+
+| redis EVAL assign-ride.lua                    |
+| atomically: is ride still SEARCHING, is this   |
+| driver's offer still for the active batch,     |
+| is the driver free? -> assign, else reject     |
++---------------------------------------------+
+   |
+   v
+ winner: ride -> ASSIGNED in postgres, driver -> ON_TRIP, "ride:status" pushed to rider
+ losers: 409 (someone else got it) / 410 (offer already expired)
+
+ nobody accepts in time -> advance-batch.lua atomically moves to the next nearest
+ batch of drivers, or closes the ride out to TIMEOUT after the configured retries
+```
+
+## Ride lifecycle
+
+`REQUESTED -> SEARCHING -> ASSIGNED`, with `SEARCHING -> TIMEOUT` if nobody accepts
+after all retries, and `SEARCHING -> CANCELLED` if the rider cancels mid-search. Once a
+ride is `ASSIGNED`, `TIMEOUT` or `CANCELLED` it's terminal.
+
+## Concurrency design
+
+This is the part the assignment cares most about, so here's the reasoning.
+
+**Why Redis Lua scripts instead of a distributed lock.** A lock (Redlock or otherwise)
+would mean: acquire lock for ride X, read its status, decide, write, release lock. That's
+correct but it's two round trips wrapped around application logic, plus lock TTL
+tuning and the risk of a stuck lock if a process dies mid-hold. A ride assignment is a
+single, small, well-defined state transition ("if SEARCHING, become ASSIGNED"), and Redis
+already executes a Lua script as one atomic unit with no other client's commands
+interleaved. So the check-and-set just *is* the lock, with no separate acquire/release
+step and nothing to leak if a request dies halfway through.
+
+**How the actual race is closed.** `assign-ride.lua` (`src/redis/lua/assign-ride.lua`)
+does the whole "is this ride still available, and is this specific driver's offer still
+valid" check and the write in one round trip. When two drivers hit `/accept` at the same
+moment, Redis simply executes one script fully before the other starts - there is no
+window where both can read "still SEARCHING". Whoever's script runs first flips the
+ride to `ASSIGNED`; the second one reads that new state and is rejected. This is verified
+by `test/concurrency.e2e-spec.ts`, which fires real concurrent HTTP requests rather than
+just asserting the behaviour in prose.
+
+**The "driver accepts right as the timeout fires" edge case.** Each batch of offers has
+a `batchNumber`, and the ride hash tracks an `activeBatch`. Accepting only succeeds if
+the driver's offer belongs to the currently active batch. When a batch's timer expires,
+`advance-batch.lua` atomically bumps `activeBatch` (or closes the ride to `TIMEOUT`) -
+again in one script, so it can't overlap with an in-flight accept for that same batch.
+If the accept script runs first, the ride is already `ASSIGNED` by the time the timeout
+handler looks, and it just backs off. If the timeout script runs first, the late
+driver's `activeBatch` check fails and they get a `410 Gone` ("your offer has expired")
+instead of a stale assignment.
+
+**Idempotency.** A driver retrying the same accept call (network blip, client-side
+retry, whatever) is handled by the same script: if the ride is already `ASSIGNED` to
+*that* driver, it returns success again rather than an error. No separate idempotency
+key is needed because the natural identity of the operation - "this driver accepting
+this ride" - is already what the script checks against.
+
+**Stopping a driver from being double-booked across two different rides.** The
+assignment's concurrency requirement is about one ride, but the same driver can also be
+offered on two different rides that are searching at the same time. `assign-ride.lua`
+also checks a `driver:{id}:active_ride` key and refuses to assign a driver who's already
+on a trip, so accepting ride B while mid-trip on ride A fails with `409` instead of
+quietly double-booking them. That key is cleared when a driver flips back to `ONLINE`.
+
+**Timeout/retry scheduling.** Each batch's timeout is a plain `setTimeout` in
+`RideAllocationService`, which is simple and easy to reason about for a single process.
+The tradeoff: if the process restarts mid-search, in-flight timers are lost. For a
+multi-instance deployment I'd move this to delayed jobs (BullMQ, backed by the same
+Redis) so any worker can pick up the timeout - the Redis-side atomicity here wouldn't
+need to change at all, only who's responsible for firing the timer.
+
+## Notifications
+
+Drivers get ride offers over a Socket.IO gateway (`src/notifications/notifications.gateway.ts`):
+connect with `?driverId=<id>` and the server pushes a `ride:offer` event to that driver's
+room. Riders can connect with `?rideId=<id>` to receive `ride:status` events as the ride
+moves through its lifecycle.
+
+Accepting is done over REST (`POST /rides/:id/accept`), not over the socket. Reasoning:
+the notification side just needs to fan a message out to a batch of drivers, which
+websockets are a natural fit for, but the accept path is the part that has to be
+correct under concurrency, and a plain HTTP endpoint backed by an atomic Redis script is
+far easier to reason about (and to test with concurrent HTTP requests) than juggling
+multiple socket connections racing each other.
+
+## API
+
+Base URL: `http://localhost:3000`. A Postman collection is at
+`postman/vybecabs.postman_collection.json`. curl examples:
 
 ```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+# register a driver
+curl -X POST localhost:3000/drivers \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Ramesh Kumar","phone":"9810000001","vehicleNo":"DL01AB1001"}'
+
+# update a driver's location
+curl -X PATCH localhost:3000/drivers/<driverId>/location \
+  -H "Content-Type: application/json" \
+  -d '{"lat":28.6139,"lng":77.2090}'
+
+# bring a driver online (only online drivers are searchable)
+curl -X PATCH localhost:3000/drivers/<driverId>/status \
+  -H "Content-Type: application/json" \
+  -d '{"status":"ONLINE"}'
+
+# request a ride
+curl -X POST localhost:3000/rides \
+  -H "Content-Type: application/json" \
+  -d '{"riderName":"Aman","riderPhone":"9999999999","pickupLat":28.6139,"pickupLng":77.2090}'
+
+# check ride status / who's been offered it
+curl localhost:3000/rides/<rideId>
+
+# driver accepts
+curl -X POST localhost:3000/rides/<rideId>/accept \
+  -H "Content-Type: application/json" \
+  -d '{"driverId":"<driverId>"}'
+
+# rider cancels while still searching
+curl -X POST localhost:3000/rides/<rideId>/cancel
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+## Configuration
 
-## Resources
+See `.env.example`. The interesting knobs:
 
-Check out a few resources that may come in handy when working with NestJS:
-
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
-
-## Support
-
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
-
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+| var | default | meaning |
+|---|---|---|
+| `RIDE_OFFER_TIMEOUT_MS` | 15000 | how long a batch of drivers has to respond |
+| `RIDE_BATCH_SIZE` | 3 | how many nearest drivers get offered at once |
+| `RIDE_MAX_RETRIES` | 3 | how many times to retry with a fresh batch before giving up |
+| `RIDE_SEARCH_RADIUS_KM` | 5 | geo search radius |

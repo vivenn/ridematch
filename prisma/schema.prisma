@@ -1,0 +1,88 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum DriverStatus {
+  OFFLINE
+  ONLINE
+  ON_TRIP
+}
+
+enum RideStatus {
+  REQUESTED
+  SEARCHING
+  ASSIGNED
+  TIMEOUT
+  CANCELLED
+}
+
+enum OfferStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  EXPIRED
+}
+
+model Driver {
+  id        String       @id @default(uuid())
+  name      String
+  phone     String       @unique
+  vehicleNo String
+  status    DriverStatus @default(OFFLINE)
+  lat       Float?
+  lng       Float?
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  rides  Ride[]
+  offers RideOffer[]
+
+  @@map("drivers")
+}
+
+model Ride {
+  id             String     @id @default(uuid())
+  riderName      String
+  riderPhone     String
+  pickupLat      Float
+  pickupLng      Float
+  dropLat        Float?
+  dropLng        Float?
+  status         RideStatus @default(REQUESTED)
+  assignedDriver Driver?    @relation(fields: [driverId], references: [id])
+  driverId       String?
+  retryCount     Int        @default(0)
+  requestedAt    DateTime   @default(now())
+  assignedAt     DateTime?
+  cancelledAt    DateTime?
+
+  offers RideOffer[]
+
+  @@map("rides")
+}
+
+model RideOffer {
+  id          String      @id @default(uuid())
+  ride        Ride        @relation(fields: [rideId], references: [id])
+  rideId      String
+  driver      Driver      @relation(fields: [driverId], references: [id])
+  driverId    String
+  batchNumber Int
+  status      OfferStatus @default(PENDING)
+  offeredAt   DateTime    @default(now())
+  respondedAt DateTime?
+
+  @@unique([rideId, driverId])
+  @@map("ride_offers")
+}

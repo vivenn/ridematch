@@ -63,6 +63,8 @@ export class DriversService {
       if (driver.lat != null && driver.lng != null) {
         await this.redis.setDriverLocation(id, driver.lat, driver.lng);
       }
+      // coming back online means whatever trip they were on is done
+      await this.redis.releaseDriver(id);
     } else {
       await this.redis.removeDriverLocation(id);
     }

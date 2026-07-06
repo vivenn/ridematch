@@ -4,8 +4,16 @@ import { PrismaModule } from './prisma/prisma.module';
 import { RedisModule } from './redis/redis.module';
 import { DriversModule } from './drivers/drivers.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { RidesModule } from './rides/rides.module';
 
 @Module({
-  imports: [ConfigModule.forRoot({ isGlobal: true }), PrismaModule, RedisModule, DriversModule, NotificationsModule],
+  imports: [
+    ConfigModule.forRoot({ isGlobal: true }),
+    PrismaModule,
+    RedisModule,
+    DriversModule,
+    NotificationsModule,
+    RidesModule,
+  ],
 })
 export class AppModule {}

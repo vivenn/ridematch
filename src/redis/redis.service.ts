@@ -2,14 +2,21 @@ import { Inject, Injectable } from '@nestjs/common';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { Redis } from 'ioredis';
-import { REDIS_CLIENT, DRIVERS_GEO_KEY, rideKey, rideOffersKey } from './redis.constants';
+import { REDIS_CLIENT, DRIVERS_GEO_KEY, rideKey, rideOffersKey, driverActiveRideKey } from './redis.constants';
 
 export interface NearbyDriver {
   driverId: string;
   distanceKm: number;
 }
 
-export type AssignResult = 'ASSIGNED' | 'ALREADY_ASSIGNED_TO_YOU' | 'ALREADY_ASSIGNED' | 'OFFER_EXPIRED' | 'NOT_FOUND' | string;
+export type AssignResult =
+  | 'ASSIGNED'
+  | 'ALREADY_ASSIGNED_TO_YOU'
+  | 'ALREADY_ASSIGNED'
+  | 'OFFER_EXPIRED'
+  | 'DRIVER_BUSY'
+  | 'NOT_FOUND'
+  | string;
 export type AdvanceResult = 'ADVANCED' | 'TIMEOUT' | 'ALREADY_ADVANCED' | string;
 
 const LUA_DIR = join(__dirname, 'lua');
@@ -66,12 +73,17 @@ export class RedisService {
   async acceptRide(rideId: string, driverId: string): Promise<AssignResult> {
     const [, message] = (await this.client.eval(
       assignRideScript,
-      2,
+      3,
       rideKey(rideId),
       rideOffersKey(rideId),
+      driverActiveRideKey(driverId),
       driverId,
     )) as [number, AssignResult];
     return message;
+  }
+
+  async releaseDriver(driverId: string) {
+    await this.client.del(driverActiveRideKey(driverId));
   }
 
   async advanceBatch(rideId: string, currentBatch: number, next: number | 'TIMEOUT'): Promise<AdvanceResult> {

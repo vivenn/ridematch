@@ -1,5 +1,6 @@
 -- KEYS[1] = ride:{id} hash (status, driverId, activeBatch)
 -- KEYS[2] = ride:{id}:offers hash (driverId -> batchNumber)
+-- KEYS[3] = driver:{driverId}:active_ride (holds the rideId a driver is currently on, if any)
 -- ARGV[1] = driverId trying to accept
 
 local status = redis.call('HGET', KEYS[1], 'status')
@@ -27,5 +28,11 @@ if offeredBatch == false or offeredBatch ~= activeBatch then
   return { 0, 'OFFER_EXPIRED' }
 end
 
+local busyOn = redis.call('GET', KEYS[3])
+if busyOn then
+  return { 0, 'DRIVER_BUSY' }
+end
+
 redis.call('HSET', KEYS[1], 'status', 'ASSIGNED', 'driverId', ARGV[1])
+redis.call('SET', KEYS[3], KEYS[1])
 return { 1, 'ASSIGNED' }

@@ -2,26 +2,31 @@ import { Inject, Injectable, OnModuleDestroy } from '@nestjs/common';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { Redis } from 'ioredis';
-import { REDIS_CLIENT, DRIVERS_GEO_KEY, rideKey, rideOffersKey, driverActiveRideKey } from './redis.constants';
+import {
+  REDIS_CLIENT,
+  DRIVERS_GEO_KEY,
+  rideKey,
+  rideOffersKey,
+  driverActiveRideKey,
+} from './redis.constants';
 
 export interface NearbyDriver {
   driverId: string;
   distanceKm: number;
 }
 
-export type AssignResult =
-  | 'ASSIGNED'
-  | 'ALREADY_ASSIGNED_TO_YOU'
-  | 'ALREADY_ASSIGNED'
-  | 'OFFER_EXPIRED'
-  | 'DRIVER_BUSY'
-  | 'NOT_FOUND'
-  | string;
-export type AdvanceResult = 'ADVANCED' | 'TIMEOUT' | 'ALREADY_ADVANCED' | string;
+// 'ASSIGNED' | 'ALREADY_ASSIGNED_TO_YOU' | 'ALREADY_ASSIGNED' | 'OFFER_EXPIRED' | 'DRIVER_BUSY'
+// | 'NOT_FOUND', or the ride's current status if it's not in a state that can be accepted
+export type AssignResult = string;
+// 'ADVANCED' | 'TIMEOUT' | 'ALREADY_ADVANCED', or the ride's current status
+export type AdvanceResult = string;
 
 const LUA_DIR = join(__dirname, 'lua');
 const assignRideScript = readFileSync(join(LUA_DIR, 'assign-ride.lua'), 'utf8');
-const advanceBatchScript = readFileSync(join(LUA_DIR, 'advance-batch.lua'), 'utf8');
+const advanceBatchScript = readFileSync(
+  join(LUA_DIR, 'advance-batch.lua'),
+  'utf8',
+);
 const cancelRideScript = readFileSync(join(LUA_DIR, 'cancel-ride.lua'), 'utf8');
 
 @Injectable()
@@ -40,7 +45,12 @@ export class RedisService implements OnModuleDestroy {
     await this.client.zrem(DRIVERS_GEO_KEY, driverId);
   }
 
-  async findNearbyDrivers(lat: number, lng: number, radiusKm: number, count: number): Promise<NearbyDriver[]> {
+  async findNearbyDrivers(
+    lat: number,
+    lng: number,
+    radiusKm: number,
+    count: number,
+  ): Promise<NearbyDriver[]> {
     const results = (await this.client.geosearch(
       DRIVERS_GEO_KEY,
       'FROMLONLAT',
@@ -62,7 +72,10 @@ export class RedisService implements OnModuleDestroy {
   }
 
   async initRideState(rideId: string, activeBatch: number) {
-    await this.client.hset(rideKey(rideId), { status: 'SEARCHING', activeBatch });
+    await this.client.hset(rideKey(rideId), {
+      status: 'SEARCHING',
+      activeBatch,
+    });
   }
 
   async recordOffers(rideId: string, driverIds: string[], batchNumber: number) {
@@ -90,7 +103,11 @@ export class RedisService implements OnModuleDestroy {
     await this.client.del(driverActiveRideKey(driverId));
   }
 
-  async advanceBatch(rideId: string, currentBatch: number, next: number | 'TIMEOUT'): Promise<AdvanceResult> {
+  async advanceBatch(
+    rideId: string,
+    currentBatch: number,
+    next: number | 'TIMEOUT',
+  ): Promise<AdvanceResult> {
     const [, message] = (await this.client.eval(
       advanceBatchScript,
       1,
@@ -102,7 +119,11 @@ export class RedisService implements OnModuleDestroy {
   }
 
   async cancelRide(rideId: string): Promise<AssignResult> {
-    const [, message] = (await this.client.eval(cancelRideScript, 1, rideKey(rideId))) as [number, AssignResult];
+    const [, message] = (await this.client.eval(
+      cancelRideScript,
+      1,
+      rideKey(rideId),
+    )) as [number, AssignResult];
     return message;
   }
 

@@ -24,7 +24,9 @@ export interface RideStatusPayload {
 }
 
 @WebSocketGateway({ cors: { origin: '*' } })
-export class NotificationsGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class NotificationsGateway
+  implements OnGatewayConnection, OnGatewayDisconnect
+{
   @WebSocketServer()
   server: Server;
 
@@ -35,11 +37,11 @@ export class NotificationsGateway implements OnGatewayConnection, OnGatewayDisco
     const rideId = client.handshake.query.rideId as string | undefined;
 
     if (driverId) {
-      client.join(`driver:${driverId}`);
+      void client.join(`driver:${driverId}`);
       this.logger.log(`driver ${driverId} connected (${client.id})`);
     }
     if (rideId) {
-      client.join(`rider:${rideId}`);
+      void client.join(`rider:${rideId}`);
       this.logger.log(`rider watching ride ${rideId} connected (${client.id})`);
     }
   }

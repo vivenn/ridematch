@@ -1,4 +1,4 @@
-# vybecabs
+# ridematch
 
 Real-time driver allocation service. A rider requests a ride, the system finds the
 nearest online drivers using Redis geo search, offers the ride to a small batch of them

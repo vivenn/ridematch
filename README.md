@@ -207,3 +207,7 @@ See `.env.example`. The interesting knobs:
 | `RIDE_BATCH_SIZE` | 3 | how many nearest drivers get offered at once |
 | `RIDE_MAX_RETRIES` | 3 | how many times to retry with a fresh batch before giving up |
 | `RIDE_SEARCH_RADIUS_KM` | 5 | geo search radius |
+
+## License
+
+[MIT](LICENSE) © 2026 Vinod Suthar

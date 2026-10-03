@@ -162,7 +162,7 @@ multiple socket connections racing each other.
 ## API
 
 Base URL: `http://localhost:3000`. A Postman collection is at
-`postman/vybecabs.postman_collection.json`. curl examples:
+`postman/ridematch.postman_collection.json`. curl examples:
 
 ```bash
 # register a driver
